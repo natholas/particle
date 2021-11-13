@@ -1,0 +1,15 @@
+canvas {
+  display: block;
+  width: 100%!important;
+  height: auto!important;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.ui {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  background-color: white;
+  padding: 20px
+}
