@@ -2,14 +2,16 @@ canvas {
   display: block;
   width: 100%!important;
   height: auto!important;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  /* image-rendering: pixelated;
+  image-rendering: crisp-edges; */
 }
 
 .ui {
-  position: absolute;
+  /* position: absolute; */
   top: 0px;
   left: 0px;
   background-color: white;
-  padding: 10px
+  padding: 10px;
+  /* opacity: 0; */
 }
+

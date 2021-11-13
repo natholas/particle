@@ -8,6 +8,26 @@
   <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 <body>
+
+  <script type="x-shader/x-vertex" id="vertexshader">
+    void main() {
+      vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+      gl_PointSize = 4.;
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  </script>
+
+  <script type="x-shader/x-fragment" id="fragmentshader">
+    uniform vec3 color;
+    uniform sampler2D pointTexture;
+
+    void main() {
+      gl_FragColor = vec4( color * 2., 1.0 );
+      gl_FragColor = gl_FragColor * texture2D( pointTexture, gl_PointCoord );
+    }
+  </script>
+
+
   <app-root></app-root>
 </body>
 </html>

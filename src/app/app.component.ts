@@ -1,4 +1,4 @@
-import { Component, NgZone, OnInit } from '@angular/core';
+import { Component, HostListener, NgZone, OnInit } from '@angular/core';
 import * as THREE from 'three/build/three';
 import { angleToVec } from './lib/angle-to-vec';
 import { random } from './lib/random';
@@ -7,8 +7,10 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { BrightnessContrastShader } from 'three/examples/jsm/shaders/BrightnessContrastShader.js'
+import { ColorCorrectionShader } from 'three/examples/jsm/shaders/ColorCorrectionShader.js'
 
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+const queryCount = parseInt(document.location.search.split('count=')?.[1])
+const queryTeams = parseInt(document.location.search.split('teams=')?.[1]) || 2
 
 @Component({
   selector: 'app-root',
@@ -16,33 +18,22 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
   styleUrls: ['./app.component.css']
 })
 export class AppComponent implements OnInit {
-  width = (Math.ceil(window.innerWidth / 2) * 2)
-  height = (Math.ceil(window.innerHeight / 2) * 2)
-  numberOfPoints = 10000
-  trailLength = 0.05
+  scale = 0.8
+  width = (Math.ceil(window.innerWidth * this.scale / 2) * 2)
+  height = (Math.ceil(window.innerHeight * this.scale / 2) * 2)
+  numberOfPoints = queryCount || 10000
+  trailLength = 0.015
   frameCount = 0
   teams = [
     {
-      color: 'rgb(125,0,255)',
-      colorToLookForIndex: 2,
-      dotSize: 4,
-      speed: 2,
+      color: [2, 0, 0],
+      speed: 1,
       turnAmount: 20,
       lookAheadDist: 20,
       lookAheadAngle: 45,
       turnThreshold: 100,
-      rotationRandomness: 4
-    },
-    {
-      color: 'rgb(255,255, 0)',
-      colorToLookForIndex: 1,
-      dotSize: 4,
-      speed: 2,
-      turnAmount: 20,
-      lookAheadDist: 35,
-      lookAheadAngle: 30,
-      turnThreshold: 100,
-      rotationRandomness: 4
+      rotationRandomness: 4,
+      respect: 40
     },
   ]
   scene
@@ -50,22 +41,50 @@ export class AppComponent implements OnInit {
   composer
   camera
   clearer
-  spheres: {directions: number[], geometry: any}[] = []
+  gl
+  spheres: {directions: number[], geometry: any, material: any}[] = []
   canvas: HTMLCanvasElement
   buffer = new Uint8ClampedArray(this.width * this.height * 4)
+
+  @HostListener('window:keyup', ['$event'])
+  keyEvent(event: KeyboardEvent) {
+    // if (event.key === 'r') {
+      this.randomize()
+      this.updateColors()
+    // }
+  }
 
   constructor(private zone: NgZone) {}
 
   ngOnInit() {
-    this.canvas = document.querySelector('canvas')
-    this.scene = new THREE.Scene();
+    for (let i = 1; i < queryTeams; i++) {
+      this.teams.push(JSON.parse(JSON.stringify(this.teams[0])))
+    }
 
-    this.setupCamera()
-    this.setupPoints()
-    this.setupRenderer()
-    this.setupClearer()
+    this.randomize()
     
-    this.zone.runOutsideAngular(() => this.render())
+    this.zone.runOutsideAngular(() => {
+      this.canvas = document.querySelector('canvas')
+      this.scene = new THREE.Scene();
+
+      this.setupCamera()
+      this.setupPoints()
+      this.setupRenderer()
+      this.setupClearer()
+      this.render()
+    })
+  }
+
+  randomize() {
+    this.teams.forEach((team, i) => {
+      team.lookAheadAngle = random(20, 35)
+      team.lookAheadDist = random(10, 50)
+      team.respect = random(10, 50)
+      team.rotationRandomness = random(0, 15)
+      team.turnAmount = random(8, 30)
+      team.turnThreshold = random(50, 150)
+      team.color = this.randomColor()
+    })
   }
 
   updateTrail() {
@@ -74,9 +93,8 @@ export class AppComponent implements OnInit {
   
   render() {
     window.requestAnimationFrame(this.render.bind(this))
-    this.frameCount += 1
-    const gl = this.renderer.getContext()
-    gl.readPixels(0, 0, this.width, this.height, gl.RGBA, gl.UNSIGNED_BYTE, this.buffer);
+    this.gl.readPixels(0, 0, this.width, this.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, this.buffer);
+    
     this.spheres.forEach((sphere, i) => {
       const team = this.teams[i]
       const geometry = sphere.geometry;
@@ -120,10 +138,10 @@ export class AppComponent implements OnInit {
   }
 
   checkFront(x: number, y: number, v: number[], dist: number, team) {
-    const frontColor = this.getColor(x + v[0] * dist, y + v[1] * dist)
-    const frontMax = Math.max(...frontColor)
-    if (frontMax > team.turnThreshold && frontMax < frontColor[team.colorToLookForIndex]) {
-      return 180
+    const color = this.getColor(x + v[0] * dist, y + v[1] * dist)
+    const max = Math.max(...color)
+    if (max > team.turnThreshold && !this.checkColorMatch(team.color, color)) {
+      return random(team.respect)
     }
   }
 
@@ -132,11 +150,50 @@ export class AppComponent implements OnInit {
     const color = this.getColor(x + vector[0] * dist, y + vector[1] * dist)
     const max = Math.max(...color)
 
-    const v = color[team.colorToLookForIndex]
+    const matchesColor = this.checkColorMatch(team.color, color)
     const t = team.turnThreshold
     if (max < t) return 0
-    if (v > t) return team.turnAmount * dir
-    else if (max - v > t) return (-team.turnAmount) * dir
+    if (matchesColor) return team.turnAmount * dir
+    else return (-team.turnAmount) * dir
+  }
+
+  checkColorMatch(color1: number[], color2: number[]) {
+    if (!color2[0] && !color2[0] && !color2[0]) return true
+    const total1 = color1[0] + color1[1] + color1[2]
+    const total2 = color2[0] + color2[1] + color2[2]
+
+    const color1RedPercent = 1 / total1 * color1[0]
+    const color1GreenPercent = 1 / total1 * color1[1]
+    const color1BluePercent = 1 / total1 * color1[2]
+    
+    const color2RedPercent = 1 / total2 * color2[0]
+    const color2GreenPercent = 1 / total2 * color2[1]
+    const color2BluePercent = 1 / total2 * color2[2]
+
+    const redDiff = Math.abs(color1RedPercent - color2RedPercent)
+    const greenDiff = Math.abs(color1GreenPercent - color2GreenPercent)
+    const blueDiff = Math.abs(color1BluePercent - color2BluePercent)
+
+    return (redDiff + greenDiff + blueDiff) < 0.5
+  }
+
+  changeColor(teamI: number, color: number[]) {
+    const sphere = this.spheres[teamI]
+    const team = this.teams[teamI]
+    team.color = color;
+    this.updateColor(teamI)
+  }
+
+  updateColor(teamI: number) {
+    const sphere = this.spheres[teamI]
+    const team = this.teams[teamI]
+    sphere.material.uniforms.color.value.r = team.color[0]
+    sphere.material.uniforms.color.value.g = team.color[1]
+    sphere.material.uniforms.color.value.b = team.color[2]
+    sphere.material.uniformsNeedUpdate = true
+  }
+  updateColors() {
+    this.teams.forEach((t, i) => this.updateColor(i))
   }
 
   checkBounds(x: number, y: number) {
@@ -149,29 +206,35 @@ export class AppComponent implements OnInit {
     const pointsPerTeam = Math.round(this.numberOfPoints / this.teams.length);
     for (let teamI = 0; teamI < this.teams.length; teamI++) {
       const positions = new Float32Array( pointsPerTeam * 3 );
-      const colors = new Float32Array( pointsPerTeam * 3 );
-      const sizes = new Float32Array( pointsPerTeam );
   
       const vertex = new THREE.Vector3();
+      const color = new THREE.Color( ...this.teams[teamI].color );
       const directions = []
   
       for ( let i = 0; i < pointsPerTeam; i ++ ) {
         vertex.x = ( Math.random() * 2 - 1 ) * this.width / 2;
         vertex.y = ( Math.random() * 2 - 1 ) * this.height / 2;
         vertex.toArray( positions, i * 3 );
-        const direction = Math.random() * 360
-        directions.push(direction)
+        directions.push(Math.random() * 360)
       }
   
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
-      geometry.setAttribute( 'customColor', new THREE.BufferAttribute( colors, 3 ) );
-      geometry.setAttribute( 'size', new THREE.BufferAttribute( sizes, 1 ) );
-  
-      const material = new THREE.PointsMaterial( { size: this.teams[teamI].dotSize, color: this.teams[teamI].color } );
+
+      const material = new THREE.ShaderMaterial( {
+        uniforms: {
+          color: { value: color },
+          pointTexture: { value: new THREE.TextureLoader().load( "/assets/spark1.png" ) }
+        },
+        vertexShader: document.getElementById( 'vertexshader' ).textContent,
+        fragmentShader: document.getElementById( 'fragmentshader' ).textContent,
+        blending: THREE.NormalBlending,
+        depthTest: false,
+        transparent: true
+      } );
   
       const sphere = new THREE.Points( geometry, material );
-      this.spheres.push({directions, geometry: sphere.geometry})
+      this.spheres.push({directions, geometry, material})
       this.scene.add( sphere );
     }
   }
@@ -186,22 +249,21 @@ export class AppComponent implements OnInit {
     const renderPass = new RenderPass( this.scene, this.camera );
     renderPass.clear = false
     this.composer.addPass( renderPass );
-    
-    // const params = {
-    //   exposure: 1000,
-    //   bloomStrength: 0.1,
-    //   bloomThreshold: 0.6,
-    //   bloomRadius: 10
-    // };
-    // const bloomPass = new UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 1.5, 0.4, 0.85 );
-    // bloomPass.threshold = params.bloomThreshold;
-    // bloomPass.strength = params.bloomStrength;
-    // bloomPass.radius = params.bloomRadius;
-    // this.composer.addPass(bloomPass)
+
+    this.gl = this.renderer.getContext()
 
     const brightness = new ShaderPass( BrightnessContrastShader );
-    brightness.uniforms.brightness.value = -0.2
+    brightness.uniforms.brightness.value = -0.12
     this.composer.addPass( brightness );
+
+    // if (this.teams.length === 1) {
+    //   const colorShader = new ShaderPass( ColorCorrectionShader );
+    //   colorShader.uniforms.mulRGB.value.x = 10
+    //   colorShader.uniforms.mulRGB.value.y = 10
+    //   colorShader.uniforms.mulRGB.value.z = 10
+    //   this.composer.addPass( colorShader );
+    // }
+
   }
 
   setupCamera() {
@@ -224,5 +286,16 @@ export class AppComponent implements OnInit {
     y = Math.round(y + this.height / 2)
     let i = Math.round((y * this.width * 4) + x * 4)
     return [this.buffer[i], this.buffer[i + 1], this.buffer[i + 2]]
+  }
+
+  randomColor() {
+    const r =(Math.random() * 1.5)
+    const g =(Math.random() * 1.5)
+    const b =(Math.random() * 1.5)
+
+    const color = [r,g,b]
+    const i = Math.floor(Math.random() * 3)
+    color[i] = 1.5
+    return color
   }
 }

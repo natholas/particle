@@ -1,13 +1,44 @@
 <canvas></canvas>
 
 <div class="ui">
-  <input type="range" min="0.01" max="0.1" step="0.01" [(ngModel)]="trailLength" (ngModelChange)="updateTrail()">
-  <div class="teams" *ngFor="let team of teams">
-    <input type="range" min="0" max="45" [(ngModel)]="team.turnAmount">
-    <input type="range" min="10" max="60" [(ngModel)]="team.lookAheadDist">
-    <input type="range" min="10" max="60" [(ngModel)]="team.lookAheadAngle">
-    <input type="range" min="1" max="3" [(ngModel)]="team.speed">
-    <input type="range" min="1" max="200" [(ngModel)]="team.turnThreshold">
-    <input type="range" min="0" max="45" [(ngModel)]="team.rotationRandomness">
+  <button (click)="randomize(); this.updateColors()">Randomize()</button>
+
+  <label>Trail length</label>
+  <input type="range" min="0.01" max="0.1" step="0.001" [(ngModel)]="trailLength" (ngModelChange)="updateTrail()">
+  <div class="teams" *ngFor="let team of teams; let i = index" [style.background-color]="'rgb(' + team.color[0] * 122 + ',' +  team.color[1] * 122 + ',' +  team.color[2] * 122 +')'">
+    <label>Turn amount</label>
+    <input type="range" min="0" max="45" [(ngModel)]="team.turnAmount"><br>
+    <label>Look ahead distance</label>
+    <input type="range" min="10" max="60" [(ngModel)]="team.lookAheadDist"><br>
+    <label>Look ahead angle</label>
+    <input type="range" min="10" max="60" [(ngModel)]="team.lookAheadAngle"><br>
+    <label>Turn threshold</label>
+    <input type="range" min="1" max="200" [(ngModel)]="team.turnThreshold"><br>
+    <label>Turn randomness</label>
+    <input type="range" min="0" max="45" [(ngModel)]="team.rotationRandomness"><br>
+    <label>Respect</label>
+    <input type="range" min="0" max="180" [(ngModel)]="team.respect"><br>
+
+    <label>R</label>
+    <input type="range" min="0" max="2" step="0.1" [(ngModel)]="team.color[0]" (ngModelChange)="updateColor(i)"><br>
+    <label>G</label>
+    <input type="range" min="0" max="2" step="0.1" [(ngModel)]="team.color[1]" (ngModelChange)="updateColor(i)"><br>
+    <label>B</label>
+    <input type="range" min="0" max="2" step="0.1" [(ngModel)]="team.color[2]" (ngModelChange)="updateColor(i)"><br>
+  </div>
+
+  <div><br>
+    <b>Count:</b><br>
+    <a href="?count=1000">1000</a><br>
+    <a href="?count=5000">5000</a><br>
+    <a href="?count=10000">10000</a><br>
+    <a href="?count=20000">20000</a><br>
+  </div>
+  <div><br>
+    <b>Teams:</b><br>
+    <a href="?teams=1">1</a><br>
+    <a href="?teams=2">2</a><br>
+    <a href="?teams=3">3</a><br>
+    <a href="?teams=4">4</a><br>
   </div>
 </div>
