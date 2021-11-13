@@ -18,38 +18,40 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 export class AppComponent implements OnInit {
   width = (Math.ceil(window.innerWidth / 2) * 2)
   height = (Math.ceil(window.innerHeight / 2) * 2)
-  numberOfPoints = 6000
-  trailLength = 0.018
+  numberOfPoints = 10000
+  trailLength = 0.05
   frameCount = 0
   teams = [
     {
-      color: 'rgb(255,0,255)',
-      colorToLookForIndex: 0,
+      color: 'rgb(125,0,255)',
+      colorToLookForIndex: 2,
       dotSize: 4,
       speed: 2,
       turnAmount: 20,
       lookAheadDist: 20,
-      lookAheadAngle: 30,
+      lookAheadAngle: 45,
       turnThreshold: 100,
+      rotationRandomness: 4
     },
     {
-      color: 'rgb(0,255,100)',
+      color: 'rgb(255,255, 0)',
       colorToLookForIndex: 1,
       dotSize: 4,
-      speed: 1,
+      speed: 2,
       turnAmount: 20,
-      lookAheadDist: 20,
+      lookAheadDist: 35,
       lookAheadAngle: 30,
       turnThreshold: 100,
+      rotationRandomness: 4
     },
   ]
   scene
   renderer
   composer
   camera
-  
+  clearer
+  spheres: {directions: number[], geometry: any}[] = []
   canvas: HTMLCanvasElement
-  points: {obj: any, direction: number, teamI: number}[] = []
   buffer = new Uint8ClampedArray(this.width * this.height * 4)
 
   constructor(private zone: NgZone) {}
@@ -65,93 +67,113 @@ export class AppComponent implements OnInit {
     
     this.zone.runOutsideAngular(() => this.render())
   }
+
+  updateTrail() {
+    this.clearer.material.opacity = this.trailLength
+  }
   
   render() {
+    window.requestAnimationFrame(this.render.bind(this))
     this.frameCount += 1
     const gl = this.renderer.getContext()
     gl.readPixels(0, 0, this.width, this.height, gl.RGBA, gl.UNSIGNED_BYTE, this.buffer);
-    this.points.forEach(p => this.transform(p))
-    // this.renderer.render(this.scene, this.camera);
+    this.spheres.forEach((sphere, i) => {
+      const team = this.teams[i]
+      const geometry = sphere.geometry;
+      const attributes = geometry.attributes;
+      for ( let i = 0; i < attributes.position.array.length; i += 3 ) {
+        const _x = attributes.position.array[ i ]
+        const _y = attributes.position.array[ i + 1 ]
+        const [x, y, direction] = this.transform(team, sphere.directions[i / 3], [_x, _y])
+
+        sphere.directions[i / 3] += direction
+        attributes.position.array[ i ] += x
+        attributes.position.array[ i + 1 ] += y
+      }
+  
+      attributes.position.needsUpdate = true;
+    })
     this.composer.render()
-    window.requestAnimationFrame(this.render.bind(this))
   }
 
-  transform(p: {obj: any, direction: number, teamI: number}) {
-    const team = this.teams[p.teamI]
-    const colorI = team.colorToLookForIndex
-    const w = this.width / 2;
-    const h = this.height / 2;
-    const {x, y} = p.obj.position
-    if (x < -w || x > w || y < -h || y > h) {
-      let v = angleToVec(p.direction)
-      const dir = new THREE.Vector3(v[0], v[1], 0)
-      p.obj.translateOnAxis(dir, -2)
-      p.direction += 180 + random(45)
-    }
-    let v = angleToVec(p.direction)
-    
-    let left = angleToVec(p.direction - team.lookAheadAngle)
-    let right = angleToVec(p.direction + team.lookAheadAngle)
-    p.direction = p.direction % 360
+  transform(team: any, direction: number, position: [number, number]) {
+    const [x, y] = position
+    let v = angleToVec(direction)
+    const resp = [v[0] * team.speed, v[1] * team.speed]
+
+    // Making sure we dont go out of bounds
+    const outOfBounds = this.checkBounds(x, y)
+    if (outOfBounds) return [v[0] * -2, v[1] * -2, 180 + random(90)]
+
     const dist = team.lookAheadDist
 
-    const leftColor = this.getColor(x + left[0] * dist, y + left[1] * dist)
-    const rightColor = this.getColor(x + right[0] * dist, y + right[1] * dist)
+    let dir = this.checkFront(x, y, v, dist, team)
+
+    if (dir === undefined) {
+      const left = this.checkSide(x, y, direction, dist, team, -1)
+      const right = this.checkSide(x, y, direction, dist, team, 1)
+      dir = Math.abs(left) > Math.abs(right) ? left : right
+    }
+
+    resp.push((dir || 0) + random(team.rotationRandomness))
+    return resp
+  }
+
+  checkFront(x: number, y: number, v: number[], dist: number, team) {
     const frontColor = this.getColor(x + v[0] * dist, y + v[1] * dist)
-
-    const leftMax = Math.max(...leftColor)
-    const rightMax = Math.max(...rightColor)
     const frontMax = Math.max(...frontColor)
-   
-    if (frontMax > team.turnThreshold && frontMax < frontColor[colorI]) {
-      p.direction += 180
+    if (frontMax > team.turnThreshold && frontMax < frontColor[team.colorToLookForIndex]) {
+      return 180
     }
+  }
 
-    if (leftMax > team.turnThreshold) {
-      if (leftColor[colorI] > team.turnThreshold) p.direction -= team.turnAmount * Math.random() * 1.5
-      else p.direction += team.turnAmount * Math.random() * 1.5
-    }
-    
-    if (rightMax > team.turnThreshold) {
-      if (rightColor[colorI] > team.turnThreshold) p.direction += team.turnAmount * Math.random() * 1.5
-      else p.direction -= team.turnAmount * Math.random() * 1.5
-    }
-    
-    const dir = new THREE.Vector3(v[0], v[1], 0)
-    p.obj.translateOnAxis(dir, team.speed)
+  checkSide(x: number, y: number, direction: number, dist: number, team, dir: 1 | -1) {
+    const vector = angleToVec(direction + team.lookAheadAngle * dir)
+    const color = this.getColor(x + vector[0] * dist, y + vector[1] * dist)
+    const max = Math.max(...color)
+
+    const v = color[team.colorToLookForIndex]
+    const t = team.turnThreshold
+    if (max < t) return 0
+    if (v > t) return team.turnAmount * dir
+    else if (max - v > t) return (-team.turnAmount) * dir
+  }
+
+  checkBounds(x: number, y: number) {
+    const w = this.width / 2;
+    const h = this.height / 2;
+    if (x < -w || x > w || y < -h || y > h) return true
   }
 
   setupPoints() {
-    const dotGeometry = new THREE.BufferGeometry();
-    dotGeometry.setAttribute( 'position', new THREE.Float32BufferAttribute( new THREE.Vector3().toArray(), 3 ) );
-    
-    const pointsPerTeam = Math.round(this.numberOfPoints / this.teams.length)
-    
-    this.teams.forEach((team, teamI) => {
-      const dotMaterial = new THREE.PointsMaterial( { size: team.dotSize, color: team.color } );
-      for (let i = 0; i < pointsPerTeam; i++) {
-        const obj = new THREE.Points( dotGeometry, dotMaterial );
-
-
-        const x = random(this.width / 2)
-        const y = random(this.height / 2)
+    const pointsPerTeam = Math.round(this.numberOfPoints / this.teams.length);
+    for (let teamI = 0; teamI < this.teams.length; teamI++) {
+      const positions = new Float32Array( pointsPerTeam * 3 );
+      const colors = new Float32Array( pointsPerTeam * 3 );
+      const sizes = new Float32Array( pointsPerTeam );
+  
+      const vertex = new THREE.Vector3();
+      const directions = []
+  
+      for ( let i = 0; i < pointsPerTeam; i ++ ) {
+        vertex.x = ( Math.random() * 2 - 1 ) * this.width / 2;
+        vertex.y = ( Math.random() * 2 - 1 ) * this.height / 2;
+        vertex.toArray( positions, i * 3 );
         const direction = Math.random() * 360
-
-
-
-        // let direction = random(360)
-        // let [x, y] = angleToVec(direction)
-        // x *= Math.random() * this.width / 8
-        // y *= Math.random() * this.width / 8
-        // direction = random(360)
-
-
-        obj.translateX(x)
-        obj.translateY(y)
-        this.scene.add( obj );
-        this.points.push({obj, direction, teamI})
+        directions.push(direction)
       }
-    })
+  
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+      geometry.setAttribute( 'customColor', new THREE.BufferAttribute( colors, 3 ) );
+      geometry.setAttribute( 'size', new THREE.BufferAttribute( sizes, 1 ) );
+  
+      const material = new THREE.PointsMaterial( { size: this.teams[teamI].dotSize, color: this.teams[teamI].color } );
+  
+      const sphere = new THREE.Points( geometry, material );
+      this.spheres.push({directions, geometry: sphere.geometry})
+      this.scene.add( sphere );
+    }
   }
 
   setupRenderer() {
@@ -164,37 +186,22 @@ export class AppComponent implements OnInit {
     const renderPass = new RenderPass( this.scene, this.camera );
     renderPass.clear = false
     this.composer.addPass( renderPass );
-
     
-    const params = {
-      exposure: 1,
-      bloomStrength: 0.1,
-      bloomThreshold: 0.7,
-      bloomRadius: 20
-    };
-
-
-    const bloomPass = new UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 1.5, 0.4, 0.85 );
-    bloomPass.threshold = params.bloomThreshold;
-    bloomPass.strength = params.bloomStrength;
-    bloomPass.radius = params.bloomRadius;
-
-    this.composer.addPass(bloomPass)
+    // const params = {
+    //   exposure: 1000,
+    //   bloomStrength: 0.1,
+    //   bloomThreshold: 0.6,
+    //   bloomRadius: 10
+    // };
+    // const bloomPass = new UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 1.5, 0.4, 0.85 );
+    // bloomPass.threshold = params.bloomThreshold;
+    // bloomPass.strength = params.bloomStrength;
+    // bloomPass.radius = params.bloomRadius;
+    // this.composer.addPass(bloomPass)
 
     const brightness = new ShaderPass( BrightnessContrastShader );
     brightness.uniforms.brightness.value = -0.2
     this.composer.addPass( brightness );
-
-
-    // const hBlur = new ShaderPass( HorizontalBlurShader );
-    // hBlur.uniforms.h.value = this.width / 2000000
-    // hBlur.clear = false
-    // this.composer.addPass( hBlur );
-
-    // const vBlur = new ShaderPass( VerticalBlurShader );
-    // vBlur.uniforms.v.value = 0
-    // vBlur.clear = false
-    // this.composer.addPass( vBlur );
   }
 
   setupCamera() {
@@ -208,6 +215,7 @@ export class AppComponent implements OnInit {
     const material = new THREE.MeshBasicMaterial( {color: 'black', opacity: this.trailLength} );
     material.transparent = true;
     const plane = new THREE.Mesh( geometry, material );
+    this.clearer = plane
     this.scene.add( plane );
   }
 
